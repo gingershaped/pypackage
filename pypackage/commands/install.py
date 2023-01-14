@@ -27,13 +27,14 @@ class InstallCommand(Command):
             return virtualenv.cli_run(["--app-data", os.path.join(self.installPath, "venv-appdata"), "--clear", "--no-vcs-ignore", "--system-site-packages", os.path.join(self.installPath, "venv")])
 
     def installPackage(self, progress, bar, environ, dpyfile, name, version, path):
-        self.console.print(f"Extracting [cyan]{path}")
+        self.console.print(f"[dim]Extracting {path}")
         filePath = dpyfile.extract(path)
         self.console.print(f"Installing {formatPackageName(name, version)}")
         cmdline = [str(environ.creator.exe), "-Im", "pip", "install", "-qq", "--use-pep517", "--no-deps", "--force-reinstall", filePath]
         #self.console.print(f"[dim]{cmdline}")
         subprocess.run(cmdline).check_returncode()
         progress.update(bar, advance = 1)
+        self.console.print(f"[green]Installed {formatPackageName(name, version)}")
         
     def installPackagesToVenv(self, environ, dpyfile, dependencyTree, pathsForDeps):
         oldCwd = os.getcwd()
@@ -50,7 +51,7 @@ class InstallCommand(Command):
                 alreadyInstalled.add(name)
             return d
         with FormattedProgress(console = self.console) as progress:
-            bar = progress.add_task(f"Installing {formatPackageName(self.metadata['name'], self.metadata['version'])}", total = len(pathsForDeps))
+            bar = progress.add_task(f"[bold]Installing {formatPackageName(self.metadata['name'], self.metadata['version'])}", total = len(pathsForDeps))
             with concurrent.futures.ThreadPoolExecutor(max_workers = 4) as pool:
                 futureToName = installLevel(pool, progress, bar, dependencyTree)
                 for future in concurrent.futures.as_completed(futureToName):

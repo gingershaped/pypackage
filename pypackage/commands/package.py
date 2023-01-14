@@ -4,12 +4,11 @@ from rich.columns import Columns
 from rich.prompt import Confirm
 from rich.progress import Progress
 from rich.padding import Padding
+from rich.pretty import pprint
 from rich.tree import Tree
-from pypi_simple import PyPISimple
-from result import Ok, Err
-from packaging.version import Version, InvalidVersion
+from pypi_simple import PYPI_SIMPLE_ENDPOINT
+from packaging.tags import sys_tags
 
-import requests
 import platformdirs
 
 import os
@@ -19,86 +18,41 @@ import json
 import sys
 import concurrent.futures
 import zipfile
+import functools
 
 from pypackage.util import assertOk, formatPackageName, renderDepTree, FormattedProgress
 from pypackage.commands import Command
-
-CHUNKSIZE = 512
-
+from pypackage.packageLocator import PackageLocator
+from pypackage.pooledDownloader import PooledDownloader
+from pypackage.tools import toolForBuildSystem
 
 class PackageCommand(Command):
     def __init__(self, subparsers):
         super().__init__(subparsers, "package", "Package a Python project to a .dpy file")
+        self.parser.add_argument("path", nargs = "?", default = ".")
 
-    def loadPyProject(self):
-        if not os.path.isfile("pyproject.toml"):
-            return Err("pyproject.toml does not exist!")
-        with open("pyproject.toml", "rb") as f:
-            data = loadToml(f)
-        return Ok(data)
-        
+    def locatePackages(self, status, dependencies, warehouseUrls = (PYPI_SIMPLE_ENDPOINT,), tags = list(sys_tags())):
+        locator = PackageLocator(warehouseUrls)
+        for c, dependency in enumerate(dependencies.values(), 1):
+            sdist = locator.sdistForDependency(dependency)
+            if not sdist:
+                self.printError(f"Unable to find match for {formatPackageName(dependency.name, dependency.version)}!")
+                exit(100)
+            yield sdist
+            for i in locator.wheelsForDependency(dependency, tags):
+                yield i
+            status.update(f"Locating packages ({c}/{len(dependencies)})")
 
-    def depsForReq(self, requirement):
-        self.console.print(Columns([f"[cyan]{requirement.name}[/cyan]",  f"[bold]{str(requirement.specifier)}"], expand = True, width = 15))
-        process = subprocess.run([sys.executable, "-m", "pipdeptree", "--json-tree", "-p", requirement.name], capture_output = True)
-        process.check_returncode()
-        result = json.loads(process.stdout)[0]
-        return result 
-
-    def locatePackagesToDownload(self, dependencies):
-        toDownload = []
-        with self.console.status("Locating package files", spinner = "dots12"), PyPISimple() as pypi:
-            for dependency in dependencies.values():
-                target = None
-                for package in pypi.get_project_page(dependency.name).packages:
-                    try:
-                        if Version(package.version) == dependency.version and package.package_type == "sdist":
-                            target = package
-                            break
-                    except InvalidVersion:
-                        self.console.print(f"[bold yellow]WARNING[/bold yellow]: Package {package.project} has an invalid version \"{package.version}\". Please alert the maintainer.")
-                if not target:
-                    self.console.print(f"[bold][red]ERROR[/red]: Unable to find a version matching {dependency.version} for package {dependency.name}.")
-                    exit(100)
-                toDownload.append(target)
-        return toDownload
-
-    def downloadThread(self, package, progress):
-        path = os.path.join(platformdirs.user_cache_path("pypackage"), f"{self.projectMeta['name']}-build", package.filename)
-        if os.path.exists(path) and False:
-            self.console.print(f"Using cached [bold][cyan]{package.project}[/cyan] {package.version}[/bold]")
-            return path
-        bar = progress.add_task(f"Downloading [bold][cyan]{package.project}[/cyan] {package.version}[/bold]...", total = None, visible = False)
-        request = requests.get(package.url, stream = True)
-        with open(path, "wb") as file:
-            if "Content-Length" in request.headers:
-                progress.start_task(bar)
-                total = int(request.headers["Content-Length"]) // CHUNKSIZE
-                progress.update(bar, total = total)
-                if not total < CHUNKSIZE * 4:
-                    progress.update(bar, visible = True)
-            else:
-                progress.update(bar, visible = True)
-            for chunk in request.iter_content(CHUNKSIZE):
-                file.write(chunk)
-                if "Content-Length" in request.headers:
-                    progress.update(bar, advance = 1)
-        progress.update(bar, visible = False)
-        self.console.print(f"Downloaded [bold][cyan]{package.project}[/cyan] {package.version}[/bold]")
-        return path
-    
-    def downloadPackages(self, packages):
-        os.makedirs(os.path.join(platformdirs.user_cache_path("pypackage"), f"{self.projectMeta['name']}-build"), exist_ok = True)
-        results = set()
-        with FormattedProgress(console = self.console) as progress, concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            tasks = {executor.submit(self.downloadThread, package, progress): package for package in packages}
-            for future in concurrent.futures.as_completed(tasks):
-                results.add(future.result())
-        return results
+    def downloadPackages(self, downloader, packages, paths):
+        with FormattedProgress(console = self.console, expand = True) as progress:
+            for package, path in zip(packages, paths):
+                future = downloader.downloadUrlToPath(progress, package.url, path, f"Downloading [cyan]{package.filename}[/cyan]...")
+                #future.add_done_callback(functools.partial(lambda package, f: self.console.print(f"Downloaded [cyan]{package.filename}[/cyan]"), package))
+                yield future
 
     def buildProject(self, projdir):
         cmdline = [sys.executable, "-m", "build", "--sdist", "--outdir", os.path.join(platformdirs.user_cache_path("pypackage"), f"{self.projectMeta['name']}-build"), projdir]
-        self.console.print(f"[green]{str(cmdline)}")
+        #self.console.print(f"[green]{str(cmdline)}")
         subprocess.run(cmdline)
         return os.path.join(platformdirs.user_cache_path("pypackage"), f"{self.projectMeta['name']}-build", f"{self.projectMeta['name']}-{self.projectMeta['version']}.tar.gz")
 
@@ -114,22 +68,23 @@ class PackageCommand(Command):
             dpy.write(path, arcname = os.path.join(arcbase, os.path.basename(path)))
     
     def run(self, args):
-        config = assertOk(self.loadPyProject())
-        with self.console.status("Identifying project", spinner = "dots12") as status:
-            match config["build-system"]["build-backend"]:
-                case "poetry.core.masonry.api":
-                    self.console.print("[dim]Detected Poetry project.")
-                    status.update("Resolving dependencies")
-                    import pypackage.poetry
-                    with open("poetry.lock", "rb") as lockfile:
-                        lockData = loadToml(lockfile)
-                    tools = pypackage.poetry.PoetryTools(self.console, lockData, config)
-                case _:
-                    raise RuntimeError("Unknown build system!")
-
+        oldCwd = os.getcwd()
+        os.chdir(args.path)
+        
+        if not os.path.isfile("pyproject.toml"):
+            self.printError(f"{os.path.join(os.getcwd(), 'pyproject.toml')} does not exist!")
+            exit(101)
+        with self.console.status("Identifying project", spinner = "dots12"), open("pyproject.toml", "rb") as pyprojectFile:
+            pyproject = loadToml(pyprojectFile)
+            
+            tools = toolForBuildSystem(pyproject["build-system"]["build-backend"])(self.console, pyproject)
             self.projectMeta = tools.generateMeta()
+            self.cachePath = os.path.join(platformdirs.user_cache_path("pypackage"), f"{self.projectMeta['name']}-build")
+            os.makedirs(self.cachePath, exist_ok = True)
+            
             dependencies = tools.resolveDeps()
             tree = tools.makeDepTree(dependencies)
+        self.console.print("Identifying project... done")
 
         self.console.rule("[cyan bold]Dependencies[/cyan bold]")
         self.console.print(renderDepTree(Tree(formatPackageName(self.projectMeta["name"], self.projectMeta["version"])), tree))
@@ -138,17 +93,26 @@ class PackageCommand(Command):
         if not Confirm.ask("Proceed with packaging?", console = self.console):
             self.console.print("[bold red]Aborted.")
             exit(2)
-        toDownload = self.locatePackagesToDownload(dependencies)
+
+        self.console.print()
+        with self.console.status("Locating packages", spinner = "dots12") as status:
+            packages = list(self.locatePackages(status, dependencies))
+        
         self.console.print("[bold]Downloading packages...")
-        paths = self.downloadPackages(toDownload)
-    
-        self.console.print(f"\nDownloaded [bold cyan]{len(paths)}[/bold cyan] packages.")
+        packagePaths = list(i.result() for i in concurrent.futures.wait(list(self.downloadPackages(PooledDownloader(), packages, (os.path.join(self.cachePath, package.filename) for package in packages))))[0])
+        
         self.console.print("[bold]Building project...[/bold]")
         builtProject = self.buildProject(os.getcwd())
-        with self.console.status("[bold]Creating final distribution...", spinner = "dots12"), zipfile.ZipFile(f"{self.projectMeta['name']}.dpy", "w") as dpyfile:
+        
+        os.makedirs("dist", exist_ok = True)
+        dpyPath = f"dist/{self.projectMeta['name']}.dpy"
+        with self.console.status("[bold]Creating final distribution...", spinner = "dots12"), zipfile.ZipFile(dpyPath, "w") as dpyfile:
             self.addMetadataToDpy(dpyfile, self.projectMeta)
             self.addDependencyTreeToDpy(dpyfile, tree)
-            self.addFilesToDpy(dpyfile, paths, "dependencies")
+            self.addFilesToDpy(dpyfile, packagePaths, "dependencies")
             self.addFilesToDpy(dpyfile, (builtProject,))
+            
+        self.console.print("Creating final distribution... done")
+        self.console.print(f"[green]Distribution located at {dpyPath}")
         self.console.print("[bold green]Packaging succeeded!")
-        
+        os.chdir(oldCwd)

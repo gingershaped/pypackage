@@ -5,7 +5,7 @@ import sys
 from hashlib import sha256
 from itertools import chain
 
-from rich.tree import Tree
+from tomli import load as loadToml
 from packaging.version import Version
 from packaging.specifiers import SpecifierSet
 from packaging.markers import Marker
@@ -18,10 +18,11 @@ from pypackage.util import Dependency
 class PoetryTools:
     LEGACY_KEYS = ["dependencies", "source", "extras", "dev-dependencies"]
     RELEVANT_KEYS = [*LEGACY_KEYS, "group"]
-    def __init__(self, console, lockfile, pyproject):
+    def __init__(self, console, pyproject):
         self.console = console
-        self.lockfile = lockfile
         self.pyproject = pyproject["tool"]["poetry"]
+        with open("poetry.lock", "rb") as lock:
+            self.lockfile = loadToml(lock)
 
     def _get_content_hash(self):
         # Yoinked from Poetry
