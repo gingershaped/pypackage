@@ -1,15 +1,7 @@
-from result import Ok, Err
-from rich.progress import Progress
-from rich.align import Align
-from rich.padding import Padding
+from typing import Iterable
 
-
-def assertOk(result):
-    match result:
-        case Ok(data):
-            return data
-        case Err(e):
-            raise RuntimeError(e)
+def nthitem(iter, n):
+    yield from (i[n] for i in iter)
 
 def formatPackageName(name, version):
     return f"[bold][cyan]{name}[/cyan] {version}"

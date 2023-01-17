@@ -360,7 +360,7 @@ python-versions = ">=3.7"
 
 [[package]]
 name = "rich"
-version = "13.0.1"
+version = "13.1.0"
 description = "Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal"
 category = "main"
 optional = false
@@ -375,7 +375,7 @@ jupyter = ["ipywidgets (>=7.5.1,<8.0.0)"]
 
 [[package]]
 name = "rope"
-version = "1.6.0"
+version = "1.7.0"
 description = "a python refactoring library..."
 category = "dev"
 optional = false
@@ -385,7 +385,7 @@ python-versions = ">=3.7"
 pytoolconfig = {version = ">=1.2.2", extras = ["global"]}
 
 [package.extras]
-dev = ["pytest (>=7.0.1)", "pytest-timeout (>=2.1.0)", "build (>=0.7.0)"]
+dev = ["pytest (>=7.0.1)", "pytest-timeout (>=2.1.0)", "build (>=0.7.0)", "pre-commit (>=2.20.0)"]
 doc = ["pytoolconfig", "sphinx (>=4.5.0)", "sphinx-autodoc-typehints (>=1.18.1)", "sphinx-rtd-theme (>=1.0.0)"]
 
 [[package]]

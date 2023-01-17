@@ -1,73 +1,50 @@
-from tomli import load as loadToml
-from tomli_w import dump as dumpToml
-from rich.prompt import Confirm
-from rich.progress import Progress, DownloadColumn
-from rich.tree import Tree
-from pypi_simple import PYPI_SIMPLE_ENDPOINT
-from packaging.tags import sys_tags
-
 import platformdirs
+
+from rich.progress import Progress, DownloadColumn
+from rich.prompt import Confirm
+from rich.tree import Tree
+from tomli import load as loadToml
 
 import os
 import os.path
-import subprocess
-import json
-import sys
-import concurrent.futures
+import itertools
 import zipfile
-import functools
+import concurrent.futures
+import sys
+import subprocess
 
-from pypackage.util import formatPackageName, renderDepTree
 from pypackage.commands import Command
+from pypackage.dpy_tools import DpyTools
 from pypackage.package_locator import PackageLocator
 from pypackage.pooled_downloader import PooledDownloader
 from pypackage.progress_manager import RichProgressManager
 from pypackage.tools import toolForBuildSystem
+from pypackage.util import renderDepTree, formatPackageName, nthitem
 
 class PackageCommand(Command):
     def __init__(self, subparsers):
         super().__init__(subparsers, "package", "Package a Python project to a .dpy file")
         self.parser.add_argument("path", nargs = "?", default = ".")
+        self.dpyTools = DpyTools()
+        self.locator = PackageLocator()
 
-    def locatePackages(self, status, dependencies, warehouseUrls = (PYPI_SIMPLE_ENDPOINT,), tags = list(sys_tags())):
-        locator = PackageLocator(warehouseUrls)
-        for c, dependency in enumerate(dependencies.values(), 1):
-            sdist = locator.sdistForDependency(dependency)
-            if not sdist:
-                self.printError(f"Unable to find match for {formatPackageName(dependency.name, dependency.version)}!")
-                exit(100)
-            yield sdist
-            for i in locator.wheelsForDependency(dependency, tags):
-                yield i
+    def locatePackages(self, status, dependencies):
+        for c, packages in enumerate(nthitem(self.locator.locatePackages(dependencies.values()), 1)):
             status.update(f"Locating packages ({c}/{len(dependencies)})")
-
+            yield from packages
     def queuePackageDownloads(self, downloader, packages, paths):
         for package, path in zip(packages, paths):
             future = downloader.downloadUrlToPath(package.url, path, f"Downloading [cyan]{package.filename}[/cyan]...")
-            yield package, future
+            yield future
     def downloadPackages(self, downloader, packages, paths):
-        for package, future in concurrent.futures.as_completed(self.queuePackageDownloads(downloader, packages, paths)):
+        for package, future in zip(packages, self.queuePackageDownloads(downloader, packages, paths)):
             self.console.print(f"Downloaded [cyan]{package.filename}[/cyan]")
             yield future.result()
-            
-    
     def buildProject(self, projdir):
         cmdline = [sys.executable, "-m", "build", "--sdist", "--outdir", os.path.join(platformdirs.user_cache_path("pypackage"), f"{self.projectMeta['name']}-build"), projdir]
-        #self.console.print(f"[green]{str(cmdline)}")
         subprocess.run(cmdline)
         return os.path.join(platformdirs.user_cache_path("pypackage"), f"{self.projectMeta['name']}-build", f"{self.projectMeta['name']}-{self.projectMeta['version']}.tar.gz")
 
-    def addMetadataToDpy(self, dpy, projectMeta):
-        with dpy.open("metadata.toml", "w") as f:
-            dumpToml(projectMeta, f)
-    def addDependencyTreeToDpy(self, dpy, tree):
-        with dpy.open("dependencies.json", "w") as f:
-            f.write(json.dumps(tree).encode("utf-8"))
-    def addFilesToDpy(self, dpy, paths, arcbase = ""):
-        for path in paths:
-            self.console.print(f"Adding [cyan]{path}")
-            dpy.write(path, arcname = os.path.join(arcbase, os.path.basename(path)))
-    
     def run(self, args):
         oldCwd = os.getcwd()
         os.chdir(args.path)
@@ -104,7 +81,8 @@ class PackageCommand(Command):
             self.console,
             *Progress.get_default_columns(),
             DownloadColumn(),
-            expand = True
+            expand = True,
+            transient = True
         )) as downloader:
             packagePaths = list(self.downloadPackages(
                 downloader,
@@ -118,10 +96,10 @@ class PackageCommand(Command):
         os.makedirs("dist", exist_ok = True)
         dpyPath = f"dist/{self.projectMeta['name']}.dpy"
         with self.console.status("[bold]Creating final distribution...", spinner = "dots12"), zipfile.ZipFile(dpyPath, "w") as dpyfile:
-            self.addMetadataToDpy(dpyfile, self.projectMeta)
-            self.addDependencyTreeToDpy(dpyfile, tree)
-            self.addFilesToDpy(dpyfile, packagePaths, "dependencies")
-            self.addFilesToDpy(dpyfile, (builtProject,))
+            self.dpyTools.addMetadataToDpy(dpyfile, self.projectMeta)
+            self.dpyTools.addDependencyTreeToDpy(dpyfile, tree)
+            for path in itertools.chain(self.dpyTools.addFilesToDpy(dpyfile, packagePaths, "dependencies"), self.dpyTools.addFilesToDpy(dpyfile, (builtProject,))):
+                self.console.print(f"Adding [cyan]{path}")
             
         self.console.print("Creating final distribution... done")
         self.console.print(f"[green]Distribution located at {dpyPath}")

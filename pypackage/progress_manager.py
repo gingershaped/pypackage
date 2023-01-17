@@ -28,7 +28,6 @@ class RichProgressManager(ProgressManager):
         self._tasks = []
         self.console = console
         self.progress = Progress(*progressColumns, console = self.console, **progressOptions)
-        self.progress.start()
 
     def addTask(self, taskLabel, total):
         ident = self.progress.add_task(taskLabel, total = total)
