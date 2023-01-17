@@ -41,11 +41,16 @@ class PackageCommand(Command):
                 yield i
             status.update(f"Locating packages ({c}/{len(dependencies)})")
 
-    def downloadPackages(self, downloader, packages, paths):
+    def queuePackageDownloads(self, downloader, packages, paths):
         for package, path in zip(packages, paths):
             future = downloader.downloadUrlToPath(package.url, path, f"Downloading [cyan]{package.filename}[/cyan]...")
-            future.add_done_callback(functools.partial(lambda package, f: self.console.print(f"Downloaded [cyan]{package.filename}[/cyan]") if not f.cancelled() else 0, package))
-            yield future
+            yield package, future
+    def downloadPackages(self, downloader, packages, paths):
+        for package, future in concurrent.futures.as_completed(self.queuePackageDownloads(downloader, packages, paths)):
+            self.console.print(f"Downloaded [cyan]{package.filename}[/cyan]")
+            yield future.result()
+            
+    
     def buildProject(self, projdir):
         cmdline = [sys.executable, "-m", "build", "--sdist", "--outdir", os.path.join(platformdirs.user_cache_path("pypackage"), f"{self.projectMeta['name']}-build"), projdir]
         #self.console.print(f"[green]{str(cmdline)}")
@@ -101,13 +106,11 @@ class PackageCommand(Command):
             DownloadColumn(),
             expand = True
         )) as downloader:
-            packagePaths = list(i.result() for i in concurrent.futures.wait(
-                self.downloadPackages(
-                    downloader,
-                    packages,
-                    (os.path.join(self.cachePath, package.filename) for package in packages)
-                )
-            )[0])
+            packagePaths = list(self.downloadPackages(
+                downloader,
+                packages,
+                (os.path.join(self.cachePath, package.filename) for package in packages)
+            ))
         
         self.console.print("[bold]Building project...[/bold]")
         builtProject = self.buildProject(os.getcwd())
