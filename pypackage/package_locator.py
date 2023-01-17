@@ -1,11 +1,14 @@
 from pypi_simple import PyPISimple, NoSuchProjectError
 from packaging.version import Version, InvalidVersion
+from packaging.tags import Tag
 from packaging.utils import parse_wheel_filename
 
+from pypackage.util import Dependency
+
 class PackageLocator:
-    def __init__(self, warehouseUrls):
+    def __init__(self, warehouseUrls: list[str]):
         self.warehouses = [PyPISimple(url) for url in warehouseUrls]
-    def sdistForDependency(self, dependency):
+    def sdistForDependency(self, dependency: Dependency):
         for warehouse in self.warehouses:
             with warehouse:
                 try:
@@ -19,7 +22,7 @@ class PackageLocator:
                     except InvalidVersion:
                         continue
         return None
-    def wheelsForDependency(self, dependency, acceptedTags):
+    def wheelsForDependency(self, dependency: Dependency, acceptedTags: set[Tag]):
         for warehouse in self.warehouses:
             with warehouse:
                 try:

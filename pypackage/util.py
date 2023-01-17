@@ -3,9 +3,6 @@ from rich.progress import Progress
 from rich.align import Align
 from rich.padding import Padding
 
-class FormattedProgress(Progress):
-    def get_renderables(self):
-        yield Padding(Align(self.make_tasks_table(self.tasks), vertical = "bottom"), pad = (1, 0, 0, 0)) 
 
 def assertOk(result):
     match result:

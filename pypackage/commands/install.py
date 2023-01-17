@@ -14,7 +14,7 @@ import os.path
 from json import load as loadJson
 
 from pypackage.commands import Command
-from pypackage.util import FormattedProgress, formatPackageName, renderDepTree
+from pypackage.util import formatPackageName, renderDepTree
 
 
 class InstallCommand(Command):

@@ -1,10 +1,7 @@
 from tomli import load as loadToml
 from tomli_w import dump as dumpToml
-from rich.columns import Columns
 from rich.prompt import Confirm
-from rich.progress import Progress
-from rich.padding import Padding
-from rich.pretty import pprint
+from rich.progress import Progress, DownloadColumn
 from rich.tree import Tree
 from pypi_simple import PYPI_SIMPLE_ENDPOINT
 from packaging.tags import sys_tags
@@ -20,10 +17,11 @@ import concurrent.futures
 import zipfile
 import functools
 
-from pypackage.util import assertOk, formatPackageName, renderDepTree, FormattedProgress
+from pypackage.util import formatPackageName, renderDepTree
 from pypackage.commands import Command
-from pypackage.packageLocator import PackageLocator
-from pypackage.pooledDownloader import PooledDownloader
+from pypackage.package_locator import PackageLocator
+from pypackage.pooled_downloader import PooledDownloader
+from pypackage.progress_manager import RichProgressManager
 from pypackage.tools import toolForBuildSystem
 
 class PackageCommand(Command):
@@ -44,12 +42,10 @@ class PackageCommand(Command):
             status.update(f"Locating packages ({c}/{len(dependencies)})")
 
     def downloadPackages(self, downloader, packages, paths):
-        with FormattedProgress(console = self.console, expand = True) as progress:
-            for package, path in zip(packages, paths):
-                future = downloader.downloadUrlToPath(progress, package.url, path, f"Downloading [cyan]{package.filename}[/cyan]...")
-                #future.add_done_callback(functools.partial(lambda package, f: self.console.print(f"Downloaded [cyan]{package.filename}[/cyan]"), package))
-                yield future
-
+        for package, path in zip(packages, paths):
+            future = downloader.downloadUrlToPath(package.url, path, f"Downloading [cyan]{package.filename}[/cyan]...")
+            future.add_done_callback(functools.partial(lambda package, f: self.console.print(f"Downloaded [cyan]{package.filename}[/cyan]") if not f.cancelled() else 0, package))
+            yield future
     def buildProject(self, projdir):
         cmdline = [sys.executable, "-m", "build", "--sdist", "--outdir", os.path.join(platformdirs.user_cache_path("pypackage"), f"{self.projectMeta['name']}-build"), projdir]
         #self.console.print(f"[green]{str(cmdline)}")
@@ -99,7 +95,19 @@ class PackageCommand(Command):
             packages = list(self.locatePackages(status, dependencies))
         
         self.console.print("[bold]Downloading packages...")
-        packagePaths = list(i.result() for i in concurrent.futures.wait(list(self.downloadPackages(PooledDownloader(), packages, (os.path.join(self.cachePath, package.filename) for package in packages))))[0])
+        with PooledDownloader(RichProgressManager(
+            self.console,
+            *Progress.get_default_columns(),
+            DownloadColumn(),
+            expand = True
+        )) as downloader:
+            packagePaths = list(i.result() for i in concurrent.futures.wait(
+                self.downloadPackages(
+                    downloader,
+                    packages,
+                    (os.path.join(self.cachePath, package.filename) for package in packages)
+                )
+            )[0])
         
         self.console.print("[bold]Building project...[/bold]")
         builtProject = self.buildProject(os.getcwd())

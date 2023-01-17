@@ -28,8 +28,7 @@ class PoetryTools:
         # Yoinked from Poetry
         relevant_content = {}
         for key in PoetryTools.RELEVANT_KEYS:
-            data = self.pyproject.get(key)
-            if data is None and key not in PoetryTools.LEGACY_KEYS:
+            if data := self.pyproject.get(key) is None and key not in PoetryTools.LEGACY_KEYS:
                 continue
             relevant_content[key] = data
         return sha256(json.dumps(relevant_content,
@@ -75,8 +74,7 @@ class PoetryTools:
         return Dependency(lockEntry["name"], Version(lockEntry["version"]), self.processLockEntryDeps(lockEntry.get("dependencies", {})))
     
     def resolveDeps(self):
-        hash = self._get_content_hash()
-        if hash != self.lockfile["metadata"]["content-hash"]:
+        if self._get_content_hash() != self.lockfile["metadata"]["content-hash"]:
             self.console.print("[bold yellow]WARNING[/bold yellow]: lockfile does not match, you may be getting incorrect dependencies! Run \"poetry lock\" to fix.")
 
         return {canonicalize_name(dependency["name"]): self.depFromLock(dependency) for dependency in self.lockfile["package"]}
