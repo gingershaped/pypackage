@@ -12,10 +12,10 @@ from packaging.markers import Marker
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
+from pypackage.util import ProjectMeta
+from pypackage.util.dependency import Dependency
 
-from pypackage.util import Dependency
-
-class PoetryTools:
+class PoetryBuildSystem:
     LEGACY_KEYS = ["dependencies", "source", "extras", "dev-dependencies"]
     RELEVANT_KEYS = [*LEGACY_KEYS, "group"]
     def __init__(self, console, pyproject):
@@ -27,8 +27,8 @@ class PoetryTools:
     def _get_content_hash(self):
         # Yoinked from Poetry
         relevant_content = {}
-        for key in PoetryTools.RELEVANT_KEYS:
-            if data := self.pyproject.get(key) is None and key not in PoetryTools.LEGACY_KEYS:
+        for key in PoetryBuildSystem.RELEVANT_KEYS:
+            if data := self.pyproject.get(key) is None and key not in PoetryBuildSystem.LEGACY_KEYS:
                 continue
             relevant_content[key] = data
         return sha256(json.dumps(relevant_content,
@@ -36,7 +36,7 @@ class PoetryTools:
 
     def makeDepTree(self, dependencies):
         tree = {}
-        basePackages = set(chain(*[set(self.pyproject.get(i, {}).keys()) for i in PoetryTools.RELEVANT_KEYS]))
+        basePackages = set(chain(*[set(self.pyproject.get(i, {}).keys()) for i in PoetryBuildSystem.RELEVANT_KEYS]))
         for name, dependency in dependencies.items():
             if name in basePackages:
                 dependency.toTree(dependencies, tree)
@@ -79,15 +79,5 @@ class PoetryTools:
 
         return {canonicalize_name(dependency["name"]): self.depFromLock(dependency) for dependency in self.lockfile["package"]}
 
-    def buildProject(self, projdir):
-        cmdline = [sys.executable, "-m", "build", "--outdir", f"{self.pyproject['name']}-build", projdir]
-        self.console.print(f"[green]{' '.join(cmdline)}")
-        subprocess.run(cmdline)
-
-    def generateMeta(self):
-        return {
-            "name": self.pyproject["name"],
-            "version": self.pyproject["version"],
-            "description": self.pyproject["description"]
-        }
-        
+    def generateMeta(self) -> ProjectMeta:
+        return ProjectMeta(self.pyproject["name"], Version(self.pyproject["version"]), self.pyproject["description"], SpecifierSet(self.pyproject["dependencies"]["python"]))

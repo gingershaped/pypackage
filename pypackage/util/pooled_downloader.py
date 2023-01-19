@@ -6,7 +6,7 @@ from rich.progress import Progress
 
 import requests
 
-from pypackage.progress_manager import ProgressManager
+from pypackage.util.progress_manager import ProgressManager
 
 class PooledDownloader:
     def __init__(self, progressManager: ProgressManager, workers: int = 4, chunksize: int = 512):
