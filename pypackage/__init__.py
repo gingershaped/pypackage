@@ -24,6 +24,8 @@ class PyPackage:
         args = self.argparser.parse_args()
         try:
             args.command.run(args)
+        except SystemExit:
+            raise
         except KeyboardInterrupt:
             self.console.print("[bold red]Aborted.")
         except:

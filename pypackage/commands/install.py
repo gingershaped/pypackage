@@ -1,6 +1,6 @@
-from packaging.utils import parse_sdist_filename
 from rich.tree import Tree
-from rich.prompt import Confirm
+from rich.table import Table
+from rich.prompt import Confirm, IntPrompt
 
 import platformdirs
 import zipfile
@@ -9,7 +9,8 @@ import os.path
 
 from pypackage.commands import Command
 from pypackage.ppk import PPK
-from pypackage.util.venv import Venv
+from pypackage.venv import Venv
+from pypackage.venv.builder import PypackageBuilder
 from pypackage.locators.python_locator import PythonLocator
 from pypackage.util import formatPackageName, renderDepTree
 
@@ -19,9 +20,22 @@ class InstallCommand(Command):
         super().__init__(subparsers, console, parentLogger, "install", "Install a .ppk file")
         self.parser.add_argument("path")
 
-        self.venv: Venv = Venv()
+        self.venv: Venv = Venv(PypackageBuilder(clear = True, with_pip = True))
         self.locator: PythonLocator = PythonLocator()
-    
+
+    def promptForPython(self, pythons):
+        self.console.print("[bold]Multiple Python interpreters are available[/bold] to create the virtual environment with.\nWhich would you like to use?")
+        pythonTable = Table(show_header = False)
+        for c, python in enumerate(pythons, 1):
+            pythonTable.add_row(f"[bold]{c}", f"[cyan]{python}")
+        self.console.print(pythonTable)
+        while True:
+            result = IntPrompt.ask("[bold purple]Select an interpreter")
+            if result >= 1 and result <= len(pythons):
+                break
+            self.console.print("[bold red]Invalid choice.")
+        return pythons[result-1]
+        
     def run(self, args):
         with zipfile.ZipFile(args.path) as ppkfile:
             self.ppk = PPK.fromZipfile(ppkfile)
@@ -35,5 +49,13 @@ class InstallCommand(Command):
             self.console.print("[bold red]Aborted.")
             exit(1)
         self.console.print()
-        self.venv.create(self.locator.locatePythonExecutables(self.ppk.python))
+        
+        pythons = list(self.locator.locatePythonExecutables(self.ppk.python))
+        assert len(pythons) > 0, "You don't have any elegible Python interpreters to make a virtualenv with. How is that even possible?!"
+        if len(pythons) > 1:
+            python = self.promptForPython(pythons)
+        else:
+            python = pythons[0]
+        with self.console.status("Creating virtualenv...", spinner = "dots12"):
+            self.venv.create(python, self.installPath)
         

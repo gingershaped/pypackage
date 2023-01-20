@@ -99,10 +99,12 @@ class PackageCommand(Command):
                 ppk.dumpMeta(metafile)
             with ppkfile.open("dependencies.dat", "w") as treefile:
                 ppk.dumpDependencyTree(treefile)
-            for file in itertools.chain(ppk.dependencyFiles, ppk.sourceFiles):
+            for file in ppk.dependencyFiles:
                 self.console.print(f"Adding [cyan]{file.path.name}")
-                file.dumpToZip(ppkfile)
-            
+                file.dumpToZip(ppkfile, "dependencies")
+            for file in ppk.sourceFiles:
+                self.console.print(f"Adding [cyan]{file.path.name}")
+                file.dumpToZip(ppkfile, "source")
             
         self.console.print("Creating final distribution... done")
         self.console.print(f"[green]Distribution located at {ppkPath}")

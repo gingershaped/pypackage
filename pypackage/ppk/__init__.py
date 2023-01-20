@@ -37,13 +37,16 @@ class PPKDependencyFile:
                 raise ValueError(f"Cannot use file {path}!")
     def __hash__(self):
         return hash(self.path)
-    def dumpToZip(self, zip: ZipFile) -> None:
-        with zip.open(str(self.path), "w") as file:
+    def dumpToZip(self, zip: ZipFile, dir = "") -> None:
+        with zip.open(os.path.join(dir, self.path.name), "w") as file:
             file.write(self.data)
 @dataclass
 class PPKWheelDependencyFile(PPKDependencyFile):
     build: Optional[tuple[int, str]]
     tags: set[Tag]
+
+    def __hash__(self):
+        return hash(self.path)
     
 
 @dataclass
@@ -58,10 +61,10 @@ class PPK:
     ppkVersion: Version = DEFAULT_PPK_VERSION
 
     @classmethod
-    def dependenciesFromDir(cls, zip: ZipFile, path: str = "dependencies") -> Iterator[PPKDependencyFile]:
+    def dependenciesFromZip(cls, zip: ZipFile, path: str = "dependencies") -> Iterator[PPKDependencyFile]:
         for path in ZipPath(zip, path).iterdir():
             assert path.is_file(), "ppk files should only have files in the dependencies folder!"
-            with path.open() as file:
+            with path.open("rb") as file:
                 if ext := os.path.splitext(path.name)[1] == ".whl":
                     yield PPKWheelDependencyFile(path, file.read(), *parse_wheel_filename(path.name))
                 elif ext == ".gz":
@@ -70,16 +73,17 @@ class PPK:
     def fromZipfile(cls, zip: ZipFile) -> "PPK":
         with zip.open("metadata.toml") as metafile:
             meta = tomli.load(metafile)["pypackage"]
-        with zip.open("dependencies.json") as depfile:
+        with zip.open("dependencies.dat") as depfile:
             dependencyTree = json.load(depfile)
         return cls(
             meta["name"],
             Version(meta["version"]),
             meta["description"],
-            Version(meta["meta"]["ppk-version"]),
+            SpecifierSet(meta["python"]),
             dependencyTree,
-            set(cls.dependenciesFromZip(zip, "dependencies")),
-            set(cls.dependenciesFromZip(zip, "src"))
+            set(cls.dependenciesFromZip(zip, "dependencies/")),
+            set(cls.dependenciesFromZip(zip, "source/")),
+            Version(meta["meta"]["ppk-version"])
         )
         
     def dumpMeta(self, file: BinaryIO) -> None:
