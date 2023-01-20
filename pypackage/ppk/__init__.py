@@ -16,6 +16,8 @@ from packaging.specifiers import SpecifierSet
 from packaging.tags import Tag
 from packaging.utils import parse_wheel_filename, parse_sdist_filename
 
+from pypackage.util import flattenDict
+
 DEFAULT_PPK_VERSION = Version("1.0")
 
 @dataclass
@@ -59,6 +61,14 @@ class PPK:
     dependencyFiles: Collection[PPKDependencyFile]
     sourceFiles: Collection[PPKDependencyFile]
     ppkVersion: Version = DEFAULT_PPK_VERSION
+
+    def fileDependsOn(self, file: PPKDependencyFile) -> Collection[PPKDependencyFile]:
+        deps = flattenDict(self.dependencyTree)[file.name]
+        for depFile in self.dependencyFiles:
+            for dep in deps:
+                if depFile.name == file.name and dep["version"] == str(depFile.version):
+                    yield depFile
+                    break
 
     @classmethod
     def dependenciesFromZip(cls, zip: ZipFile, path: str = "dependencies") -> Iterator[PPKDependencyFile]:

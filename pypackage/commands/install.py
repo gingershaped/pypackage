@@ -6,6 +6,7 @@ import platformdirs
 import zipfile
 import os
 import os.path
+import itertools
 
 from pypackage.commands import Command
 from pypackage.ppk import PPK
@@ -13,7 +14,7 @@ from pypackage.venv import Venv
 from pypackage.venv.builder import PypackageBuilder
 from pypackage.locators.python_locator import PythonLocator
 from pypackage.util import formatPackageName, renderDepTree
-
+from pypackage.util.dependency import InstallableDependency
 
 class InstallCommand(Command):
     def __init__(self, subparsers, console, parentLogger):
@@ -22,6 +23,13 @@ class InstallCommand(Command):
 
         self.venv: Venv = Venv(PypackageBuilder(clear = True, with_pip = True))
         self.locator: PythonLocator = PythonLocator()
+
+    def extractPPKDependencies(self):
+        for dep in itertools.chain(self.ppk.dependencyFiles, self.ppk.sourceFiles):
+            self.console.print(f"Extracting [cyan]{dep.path.name}")
+            with open(os.path.join(self.cachePath, dep.path.name), "wb") as file:
+                file.write(dep.data)
+                yield InstallableDependency(dep.name, dep.version, )
 
     def promptForPython(self, pythons):
         self.console.print("[bold]Multiple Python interpreters are available[/bold] to create the virtual environment with.\nWhich would you like to use?")
@@ -37,9 +45,11 @@ class InstallCommand(Command):
         return pythons[result-1]
         
     def run(self, args):
-        with zipfile.ZipFile(args.path) as ppkfile:
+        with self.console.status("Reading package data", spinner = "dots12"), zipfile.ZipFile(args.path) as ppkfile:
             self.ppk = PPK.fromZipfile(ppkfile)
         self.installPath = os.path.join(platformdirs.user_data_path("pypackage") if os.geteuid() != 0 else platformdirs.site_data_path("pypackage"), "packages", f"{self.ppk.name}")
+        self.cachePath = os.path.join(platformdirs.user_cache_path("pypackage"), f"{self.ppk.name}-build")
+        os.makedirs(self.cachePath, exist_ok = True)
 
         self.console.rule("[cyan bold]Dependencies[/cyan bold]")
         self.console.print(renderDepTree(Tree(formatPackageName(self.ppk.name, self.ppk.version)), self.ppk.dependencyTree))
@@ -56,6 +66,10 @@ class InstallCommand(Command):
             python = self.promptForPython(pythons)
         else:
             python = pythons[0]
+
+        with self.console.status("Extracting package...", spinner = "dots12"):
+            self.extractPPKDependencies()
         with self.console.status("Creating virtualenv...", spinner = "dots12"):
             self.venv.create(python, self.installPath)
+        
         
